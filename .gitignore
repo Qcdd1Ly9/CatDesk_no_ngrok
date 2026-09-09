@@ -2,3 +2,5 @@
 /npm/bin
 log.txt
 log_old.txt
+启动CatDesk公网服务.cmd
+catdesk-tunnel.ps1

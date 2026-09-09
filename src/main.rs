@@ -1326,14 +1326,21 @@ async fn run_app(
         }
     }
 
-    let continue_run = run_ngrok_auth_setup(terminal, state.clone()).await?;
-    if !continue_run {
-        return Ok(());
-    }
+    let use_external_tunnel = {
+        let app = state.lock().await;
+        app.using_external_tunnel()
+    };
 
-    let continue_run = run_ngrok_domain_setup(terminal, state.clone()).await?;
-    if !continue_run {
-        return Ok(());
+    if !use_external_tunnel {
+        let continue_run = run_ngrok_auth_setup(terminal, state.clone()).await?;
+        if !continue_run {
+            return Ok(());
+        }
+
+        let continue_run = run_ngrok_domain_setup(terminal, state.clone()).await?;
+        if !continue_run {
+            return Ok(());
+        }
     }
 
     // Start services
@@ -4549,7 +4556,11 @@ fn draw_ui(
             ),
         ]),
         Line::from(vec![
-            status_label("ngrok"),
+            status_label(if app.using_external_tunnel() {
+                "tunnel"
+            } else {
+                "ngrok"
+            }),
             Span::styled(
                 ngrok_status,
                 Style::default().fg(if app.ngrok_running {

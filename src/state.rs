@@ -236,6 +236,11 @@ pub struct AppConfig {
     pub ngrok_authtoken: Option<String>,
     pub mcp_slug: Option<String>,
     pub ngrok_domain: Option<String>,
+    /// When set, CatDesk uses an externally provided public tunnel (e.g. an SSH
+    /// reverse tunnel) instead of the embedded ngrok. `public_base_url` is the
+    /// tunnel's public origin (e.g. `https://catdesk.example.com`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_base_url: Option<String>,
     #[serde(default)]
     pub last_started_version: Option<String>,
     #[serde(default)]
@@ -268,6 +273,7 @@ impl Default for AppConfig {
             ngrok_authtoken: None,
             mcp_slug: None,
             ngrok_domain: None,
+            public_base_url: None,
             last_started_version: None,
             chatgpt_connector_revision: None,
             agents_path_mode: AgentsPathMode::Default,
@@ -297,6 +303,11 @@ impl AppConfig {
             .ngrok_domain
             .take()
             .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.public_base_url = self
+            .public_base_url
+            .take()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
             .filter(|value| !value.is_empty());
         self.partner_binagotchy_seed = self
             .partner_binagotchy_seed
@@ -513,6 +524,7 @@ pub struct AppState {
     pub ui_language: UiLanguage,
     pub mcp_slug: String,
     pub ngrok_domain: Option<String>,
+    pub public_base_url: Option<String>,
     pub is_returning_user: bool,
     pub chatgpt_connector_refresh_required: bool,
     pub chatgpt_connector_revision: Option<u32>,
@@ -871,10 +883,19 @@ impl AppState {
         } else {
             Some(CURRENT_CHATGPT_CONNECTOR_REVISION)
         };
-        let mcp_slug = match config.mcp_slug {
-            Some(slug) if !slug.is_empty() => slug,
-            _ => generate_mcp_slug(),
-        };
+        let mcp_slug = std::env::var("CATDESK_MCP_SLUG")
+            .ok()
+            .map(|slug| slug.trim().to_string())
+            .filter(|slug| !slug.is_empty())
+            .unwrap_or_else(|| match config.mcp_slug {
+                Some(slug) if !slug.is_empty() => slug,
+                _ => generate_mcp_slug(),
+            });
+        let public_base_url = std::env::var("CATDESK_PUBLIC_BASE_URL")
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+            .or(config.public_base_url.clone());
 
         Ok(Self {
             theme: config.theme,
@@ -884,6 +905,7 @@ impl AppState {
             ui_language: config.ui_language,
             mcp_slug,
             ngrok_domain: config.ngrok_domain.clone(),
+            public_base_url,
             is_returning_user,
             chatgpt_connector_refresh_required,
             chatgpt_connector_revision,
@@ -931,6 +953,12 @@ impl AppState {
             .map(|url| format!("{url}{}", self.mcp_path()))
     }
 
+    /// True when CatDesk is told to use an externally established public tunnel
+    /// (e.g. an SSH reverse tunnel) instead of the embedded ngrok client.
+    pub fn using_external_tunnel(&self) -> bool {
+        self.public_base_url.is_some()
+    }
+
     pub fn log(&mut self, level: &'static str, message: String) {
         let now = now_hms();
         let id = self.next_log_id;
@@ -950,6 +978,7 @@ impl AppState {
         let mut config = AppConfig::load_from_path(&self.config_path)?;
         config.mcp_slug = Some(self.mcp_slug.clone());
         config.ngrok_domain = self.ngrok_domain.clone();
+        config.public_base_url = self.public_base_url.clone();
         config.last_started_version = Some(env!("CARGO_PKG_VERSION").to_string());
         config.chatgpt_connector_revision = self.chatgpt_connector_revision;
         config.partner_binagotchy_seed = self.partner_binagotchy_seed.clone();

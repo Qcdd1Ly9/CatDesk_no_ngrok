@@ -3,14 +3,37 @@ use ngrok::prelude::*;
 use reqwest::Url;
 
 /// Start an ngrok HTTP tunnel using the embedded Rust SDK.
+///
+/// When an external public tunnel is configured (`public_base_url` / the
+/// `CATDESK_PUBLIC_BASE_URL` env var), this does not connect to ngrok at all.
+/// It just publishes the pre-determined public URL into the application state,
+/// so the TUI and widget/CSP logic keep working unchanged.
 pub async fn start(state: SharedState) -> Result<(), String> {
     let (port, mcp_path) = {
         let app = state.lock().await;
         if app.ngrok_running {
-            return Err("ngrok is already running".into());
+            return Err("tunnel is already running".into());
         }
         (app.port, app.mcp_path())
     };
+
+    // External tunnel mode: skip the ngrok session entirely.
+    if let Some(base_url) = {
+        let app = state.lock().await;
+        app.public_base_url.clone()
+    } {
+        {
+            let mut app = state.lock().await;
+            app.ngrok_running = true;
+            app.ngrok_url = Some(base_url.clone());
+            app.remote_connected = true;
+            app.log("INFO", "Using external tunnel (ngrok disabled)".into());
+            app.log("INFO", format!("ngrok URL: {base_url}"));
+            app.log("INFO", format!("MCP Server URL: {base_url}{mcp_path}"));
+        }
+        return Ok(());
+    }
+
     let authtoken = load_ngrok_authtoken()
         .map_err(|e| format!("Failed to read ~/.catdesk/config.toml: {e}"))?
         .ok_or_else(|| "ngrok authtoken is not configured".to_string())?;
